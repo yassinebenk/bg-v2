@@ -11,11 +11,11 @@ app = Flask(__name__)
 DPI = 300  # Dots per inch for margin calculation
 MOCKUPS = {
     "vertical": [
-        "static/mockups/mockup_vertical_small.jpeg",
-        "static/mockups/mockup_vertical_large.jpeg"
+        "mockup_vertical_small.jpeg",
+        "mockup_vertical_large.jpeg"
     ],
     "horizontal": [
-        "static/mockups/mockup_horizontal_large.png"
+        "mockup_horizontal_large.png"
     ]
 }
 
