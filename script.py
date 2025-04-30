@@ -1,25 +1,26 @@
-from flask import Flask, request, send_file
+from flask import Flask, request, send_file, jsonify
 from rembg import remove
 from PIL import Image
-import os
-import cv2
 from io import BytesIO
+import requests
+import cv2
+import numpy as np
+
 
 app = Flask(__name__)
-
-# --- Mockup constants ---
 DPI = 300  # Dots per inch for margin calculation
+
+
 MOCKUPS = {
     "vertical": [
-        "mockup_vertical_small.jpeg",
-        "mockup_vertical_large.jpeg"
+        "static/mockups/mockup_vertical_small.jpeg",
+        "static/mockups/mockup_vertical_large.jpeg"
     ],
     "horizontal": [
-        "mockup_horizontal_large.png"
+        "static/mockups/mockup_horizontal_small.png",
+        "static/mockups/mockup_horizontal_large.png"
     ]
 }
-
-# --- Mockup functions ---
 def detect_frame_area(image_path):
     img = cv2.imread(image_path)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -83,41 +84,71 @@ def overlay_in_frame(mockup_path, frame_coords, foreground_image, margin_inch=0)
     bg.paste(fg, (pos_x, pos_y), fg)
     return bg
 
-# --- Flask route ---
-@app.route('/', methods=['POST'])
-def process_art():
-    if 'file' not in request.files:
-        return 'No file uploaded', 400
+@app.route('/addmockup', methods=['POST'])
+def apply_mockup():
+   data = request.get_json()
+   if not data or 'image_url' not in data:
+      return jsonify({"error": "There's no URL in this request"}), 400
 
-    file = request.files['file']
-    if file.filename == '':
-        return 'No file selected', 400
+   image_url = data['image_url']
+   
+   try:
+         response = requests.get(image_url)
+         response.raise_for_status()
+         input_image = Image.open(BytesIO(response.content))
+         # 1. Detect orientation
+         width_px, height_px = input_image.size
+         ppi = 96  # standard screen PPI
+         width_in = width_px / ppi
+         height_in = height_px / ppi
+         orientation = "vertical" if height_in >= width_in else "horizontal"
+         # 2. Find the best mockup
+         best_mockup = find_best_mockup(orientation, width_in, height_in)
+         # 3. Overlay
+         final_image = overlay_in_frame(best_mockup["mockup_path"], best_mockup["frame_coords"], input_image, margin_inch=0.01)
+         # 4. Return the final image
+         img_io = BytesIO()
+         final_image.save(img_io, 'PNG')
+         img_io.seek(0)
+         return send_file(
+            img_io,
+            mimetype='image/png',
+            as_attachment=True,
+            download_name='final_artwork.png'
+         )
+   except requests.exceptions.RequestException as e:
+         return jsonify({"error": f"Failed to fetch image from URL: {str(e)}"}), 400
+   except Exception as e:
+         return jsonify({"error": f"Error processing image: {str(e)}"}), 500
 
-    if file:
-        input_image = Image.open(file.stream)
 
-        # 1. Remove background
-        transparent_image = remove(input_image, post_process_mask=True)
+@app.route('/backgroundremover', methods=['POST'])
+def remove_background():
+   data = request.get_json()
+   if not data or 'image_url' not in data:
+      return jsonify({"error": "There's no URL in this request"}), 400
 
-        # 2. Detect orientation
-        width_px, height_px = transparent_image.size
-        ppi = 96  # standard screen PPI
-        width_in = width_px / ppi
-        height_in = height_px / ppi
 
-        orientation = "vertical" if height_in >= width_in else "horizontal"
+   image_url = data['image_url']
+   try:
+      response = requests.get(image_url)
+      response.raise_for_status()
+      input_image = Image.open(BytesIO(response.content))
+      transparent_image = remove(input_image, post_process_mask=True)
 
-        # 3. Find the best mockup
-        best_mockup = find_best_mockup(orientation, width_in, height_in)
-
-        # 4. Overlay
-        final_image = overlay_in_frame(best_mockup["mockup_path"], best_mockup["frame_coords"], transparent_image, margin_inch=0.01)
-
-        # 5. Return the final image
-        img_io = BytesIO()
-        final_image.save(img_io, 'PNG')
-        img_io.seek(0)
-        return send_file(img_io, mimetype='image/png', as_attachment=True, download_name='final_artwork.png')
+      img_io = BytesIO()
+      transparent_image.save(img_io, 'PNG')
+      img_io.seek(0)
+      return send_file(
+         img_io,
+         mimetype='image/png',
+         as_attachment=True,
+         download_name='transparent_image.png'
+      )
+   except requests.exceptions.RequestException as e:
+      return jsonify({"error": f"Failed to fetch image from URL: {str(e)}"}), 400
+   except Exception as e:
+      return jsonify({"error": f"Error processing image: {str(e)}"}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', debug=True, port=5100)
+   app.run(host='0.0.0.0', debug=True, port=5100)
